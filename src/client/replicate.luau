@@ -205,10 +205,10 @@ RunService.PostSimulation:Connect(function()
 	-- currently sends CFrame even if player did not move due to nature of dynamic interpolation buffer (may change in the future when I think of a method)
 	-- local networkable = if changed then Networkables.MakeNetworkable(currentCFrame) else nil :: any
 	local networkable = Networkables.MakeYawNetworkable(currentCFrame)
-	Events.ClientReplicateCFrame.Fire({
-		timestamp = os.clock(),
-		cframe = networkable,
-	})
+	-- Events.ClientReplicateCFrame.Fire({
+	-- 	timestamp = os.clock(),
+	-- 	cframe = networkable,
+	-- })
 end)
 
 return {
