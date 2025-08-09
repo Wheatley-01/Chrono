@@ -1,5 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Config = require(ReplicatedStorage.Packages.chrono.shared.config)
+local Config = require(ReplicatedStorage.)
 local Iris = require(ReplicatedStorage.DevPackages.iris)
 local Replication = require(ReplicatedStorage.Packages.chrono.client.replicate)
 
@@ -12,10 +12,12 @@ local idMap = Replication.idMap
 local searchText = Iris.State("") :: typeof(Iris.State(""))
 local networkIds = GetAllNetworkIds()
 
+print(1)
 Iris.Init()
 
 Iris:Connect(function()
 	if Iris.Window({ "Replication Debug" }) then
+		print("hi")
 		if Iris.Button({ "🔄 Refresh" }).clicked then
 			networkIds = GetAllNetworkIds()
 		end

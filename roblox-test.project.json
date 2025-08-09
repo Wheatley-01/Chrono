@@ -1,7 +1,7 @@
 {
     "name": "chrono-dev",
+	"emitLegacyScripts": true,
 
-    "emitLegacyScripts": false,
 
     "tree": {
         "$className": "DataModel",

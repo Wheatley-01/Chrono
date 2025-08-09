@@ -9,6 +9,7 @@ local InterpolationBuffer = require(script.Parent.interpolationBuffer)
 local Networkables = require(script.Parent.Parent.shared.makeNetworkable)
 local RenderCache = require(script.Parent.renderCache)
 local Rig = require(script.Parent.Parent.shared.rigs.createCharacter)
+local deadReckoning = require(script.Parent.deadReckoning)
 
 local MAX_UNRELIABLE_BYTES = 900
 local SNAPSHOT_SIZE = 19
@@ -24,9 +25,12 @@ local idMap = {} :: {
 	[number]: {
 		snapshot: Snapshots.CircularSnapshot<CFrame>,
 		character: Model?,
-		lastCFrame: CFrame?, 
+		lastCFrame: CFrame?,
 		isNPC: boolean?,
 		npcType: string?,
+		deadReckoning: deadReckoning.DeadReckoning?,
+		lastNetworkUpdate: number?,
+		predictionQuality: number?,
 	},
 }
 
@@ -34,6 +38,7 @@ local player = Players.LocalPlayer
 local initializedPlayers = {} :: { [Player]: boolean }
 local characters = {} :: { [Player]: Model }
 local playerTickRates = {} :: { [number]: number }
+local playerDeadReckoning: deadReckoning.DeadReckoning = nil
 
 local bufferTracker = InterpolationBuffer(Config.MIN_BUFFER, Config.MAX_BUFFER, 0.1)
 RenderCache.Init({
@@ -54,7 +59,7 @@ local function ReadVlqRaw(b: buffer, index: number): (number, number)
 		shift += 7
 		index += 1
 	until byte < 0x80
-	return value-1, index
+	return value - 1, index
 end
 
 local function PackF16(float: number): number
@@ -89,7 +94,10 @@ end
 local function UnpackSnapshotData(
 	buff: buffer,
 	offset: number
-): ({ timestamp: number, cframe: { Position: Vector3, RotationY: number }, id: number },number)
+): (
+	{ timestamp: number, cframe: { Position: Vector3, RotationY: number }, id: number },
+	number
+)
 	local value = {}
 	value.timestamp = buffer.readf32(buff, offset + 0)
 
@@ -125,7 +133,7 @@ local function UnpackSnapshotData(
 		value.cframe.RotationY = if encoded // 0x8000 == 1 then -result else result
 	end
 
-	return value,newOffset
+	return value, newOffset
 end
 
 local function PackSnapshotData(
@@ -194,7 +202,7 @@ local function UnregisterNPC(id: number): Model?
 	end
 
 	RenderCache.Remove(id)
-	
+
 	idMap[id] = nil
 	return data.character
 end
@@ -280,7 +288,6 @@ Events.InitializeExistingPlayers.On(function(data)
 end)
 
 local lastSent = os.clock()
---local lastSentCFrame = CFrame.identity
 
 Events.TickRateChanged.On(function(data)
 	playerTickRates[data.id] = data.tickRate
@@ -289,7 +296,20 @@ end)
 local function HandleReplicatedData(clientLastTicks, cframes)
 	for id, serverTime in clientLastTicks do
 		if not idMap[id] then
-			--moved to register entity lol
+			local entityType = "npc"
+
+			idMap[id] = {
+				snapshot = Snapshots(CFrame.identity.Lerp),
+				character = nil,
+				lastCFrame = CFrame.identity,
+				isNPC = true,
+				npcType = "DEFAULT",
+				deadReckoning = deadReckoning(CFrame.identity, entityType),
+				lastNetworkUpdate = serverTime,
+				predictionQuality = 1.0,
+			}
+
+			RenderCache.Add(id, true, "DEFAULT")
 		end
 
 		if not idMap[id].isNPC then
@@ -309,16 +329,27 @@ local function HandleReplicatedData(clientLastTicks, cframes)
 
 		--since CFrames are received in the networkable format, I have to decode it to be actual CFrames. It is nicely done because of the roblox CFrame.new overload for quaternions.
 		--same applies on the server as well of course.
-		entry.snapshot:Push(clientLastTicks[id], Networkables.DecodeYawCFrame(cframe))
+		local decodedCFrame = Networkables.DecodeYawCFrame(cframe)
+		entry.snapshot:Push(clientLastTicks[id], decodedCFrame)
+
+		if entry.deadReckoning and entry.lastNetworkUpdate then
+			local deltaTime = clientLastTicks[id] - entry.lastNetworkUpdate
+			if deltaTime > 0 then
+				entry.deadReckoning:onUpdateSent(decodedCFrame, deltaTime)
+			end
+		end
+
+		entry.lastCFrame = decodedCFrame
+		entry.lastNetworkUpdate = clientLastTicks[id]
 	end
 end
 
 ServerReplicateCFrame.OnClientEvent:Connect(function(snapshotBuffer)
 	local cframes = {}
 	local timestamps = {}
-	local count,offset = ReadVlqRaw(snapshotBuffer, 0)
+	local count, offset = ReadVlqRaw(snapshotBuffer, 0)
 	for i = 1, count do
-		local snapshot,offset_ = UnpackSnapshotData(snapshotBuffer, offset)
+		local snapshot, offset_ = UnpackSnapshotData(snapshotBuffer, offset)
 		offset = offset_
 
 		local id = snapshot.id
@@ -328,10 +359,6 @@ ServerReplicateCFrame.OnClientEvent:Connect(function(snapshotBuffer)
 
 	HandleReplicatedData(timestamps, cframes)
 end)
-
--- Events.ServerReplicateCFrame.On(function(serverData: { timestamps: { [number]: number }, cframes: { [number]: any } })
--- 	HandleReplicatedData(serverData.timestamps, serverData.cframes)
--- end)
 
 RunService.PreRender:Connect(function(deltaTime: number)
 	RenderCache.Update(deltaTime)
@@ -355,7 +382,16 @@ RunService.PreRender:Connect(function(deltaTime: number)
 		local targetCFrame = data.snapshot:GetAt(targetRenderTime)
 		debug.profileend()
 
+		if not targetCFrame and data.deadReckoning then
+			targetCFrame = data.deadReckoning:predictCFrame(targetRenderTime)
+		end
+
+		if not targetCFrame then
+			targetCFrame = data.lastCFrame
+		end
+
 		debug.profilebegin("Prepare CFrame")
+
 		if targetCFrame then
 			data.lastCFrame = targetCFrame
 
@@ -373,11 +409,11 @@ RunService.PreRender:Connect(function(deltaTime: number)
 	workspace:BulkMoveTo(parts, cframes)
 end)
 
-local lastSentCFrame = CFrame.identity
-RunService.PostSimulation:Connect(function()
+RunService.PostSimulation:Connect(function(deltaTime)
 	if os.clock() - lastSent < (playerTickRates[playerNetworkId] or Config.TICK_RATE) then
 		return
 	end
+
 	lastSent = os.clock()
 
 	if not player.Character then
@@ -390,27 +426,46 @@ RunService.PostSimulation:Connect(function()
 	end
 
 	local currentCFrame = humanoidRootPart.CFrame
-	--TODO: don't send cframe when player doesn't move
-	local changed = vector.magnitude(lastSentCFrame.Position - currentCFrame.Position :: any) >= 0.1
-	or not lastSentCFrame.Rotation:FuzzyEq(currentCFrame.Rotation :: any, 0.0001)
 
-	lastSentCFrame = currentCFrame
+	--TODO: don't send cframe when player doesn't move (done)
 
-	if not changed then
+	if not playerDeadReckoning then
+		playerDeadReckoning = deadReckoning(currentCFrame, "player")
 		return
 	end
 
-	-- CFrames need to be made networkable. I am currently sending them as position: Vector3, rotation: {x, y, z} (omitting w because it can be calculated by x,y,z)
-	-- this allows for much nicer compression since I am using quaternions
-	-- currently sends CFrame even if player did not move due to nature of dynamic interpolation buffer (may change in the future when I think of a method)
-	-- local networkable = if changed then Networkables.MakeNetworkable(currentCFrame) else nil :: any
-	local networkable = Networkables.MakeYawNetworkable(currentCFrame)
-	table.insert(outgoingSnapshots, {
-		timestamp = os.clock(),
-		cframe = networkable,
-	})
+	local shouldSend, reason = playerDeadReckoning:shouldSendUpdate(currentCFrame, deltaTime)
 
-	Flush()
+	if shouldSend then
+		playerDeadReckoning:onUpdateSent(currentCFrame, deltaTime)
+
+		local networkable = Networkables.MakeYawNetworkable(currentCFrame)
+		table.insert(outgoingSnapshots, {
+			timestamp = os.clock(),
+			cframe = networkable,
+		})
+
+		Flush()
+
+		--used gpt for ts
+		-- local debugInfo = playerDeadReckoning:getDebugInfo()
+		-- print(
+		-- 	string.format(
+		-- 		"Sent: %s | Pattern: %s (%.1f%%) | Error: %.2f | Confidence: %.1f%%",
+		-- 		reason,
+		-- 		debugInfo.pattern,
+		-- 		debugInfo.patternConfidence * 100,
+		-- 		debugInfo.predictionError,
+		-- 		debugInfo.kalmanConfidence * 100
+		-- 	)
+		-- )
+	end
+
+	--Lol
+
+	-- CFrames need to be made networkable. I am currently sending them as position: Vector3, rotation: {x, y, z} (omitting w because it can be calculated by x,y,z)
+	--  this allows for much nicer compression since I am using quaternions
+	--  currently sends CFrame even if player did not move due to nature of dynamic interpolation buffer (may change in the future when I think of a method)
 end)
 
 return {
