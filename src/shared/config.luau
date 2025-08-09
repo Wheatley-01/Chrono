@@ -15,6 +15,7 @@ return table.freeze({
 		}),
 	}),
 
+	--these constants were made by gpt and tuned a little bit b y me
 	ERROR_THRESHOLD = 2.0,
 
 	ADAPTIVE_GAIN = 0.95,
