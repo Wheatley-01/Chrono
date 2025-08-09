@@ -114,7 +114,7 @@ return function(initialPosition: vector, initialVelocity: vector): KalmanFilter
 		state = {
 			position = initialPosition,
 			velocity = initialVelocity,
-			acceleration = vector.create(0, 0, 0),
+			acceleration = vector.zero,
 		},
 
 		covariance = {

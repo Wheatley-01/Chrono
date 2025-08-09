@@ -130,7 +130,7 @@ end
 
 local function calculateMetrics(self: DeadReckoning, currentCFrame: CFrame, deltaTime: number)
 	if deltaTime <= 0 then
-		return vector.create(0, 0, 0), vector.create(0, 0, 0), 0
+		return vector.zero, vector.zero, 0
 	end
 
 	local displacement = currentCFrame.Position - self.lastCFrame.Position :: any --pmo
@@ -279,8 +279,8 @@ return function(initialCFrame: CFrame, entityType: string?): DeadReckoning
 	return {
 
 		lastCFrame = initialCFrame,
-		lastVelocity = vector.create(0, 0, 0),
-		lastAcceleration = vector.create(0, 0, 0),
+		lastVelocity = vector.zero,
+		lastAcceleration = vector.zero,
 		lastAngularVelocity = 0,
 		lastUpdateTime = os.clock(),
 
@@ -290,7 +290,7 @@ return function(initialCFrame: CFrame, entityType: string?): DeadReckoning
 		patternConfidence = 0,
 
 		entityType = entityType,
-		kalmanFilter = kalmanFilter(initialCFrame.Position :: any, vector.create(0, 0, 0)),
+		kalmanFilter = kalmanFilter(initialCFrame.Position :: any, vector.zero),
 
 		predictionError = 0,
 		errorHistory = {},
