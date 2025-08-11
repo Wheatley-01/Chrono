@@ -448,17 +448,17 @@ RunService.PostSimulation:Connect(function(deltaTime)
 		Flush()
 
 		--used gpt for ts
-		-- local debugInfo = playerDeadReckoning:getDebugInfo()
-		-- print(
-		-- 	string.format(
-		-- 		"Sent: %s | Pattern: %s (%.1f%%) | Error: %.2f | Confidence: %.1f%%",
-		-- 		reason,
-		-- 		debugInfo.pattern,
-		-- 		debugInfo.patternConfidence * 100,
-		-- 		debugInfo.predictionError,
-		-- 		debugInfo.kalmanConfidence * 100
-		-- 	)
-		-- )
+		local debugInfo = playerDeadReckoning:getDebugInfo()
+		print(
+			string.format(
+				"Sent: %s | Pattern: %s (%.1f%%) | Error: %.2f | Confidence: %.1f%%",
+				reason,
+				debugInfo.pattern,
+				debugInfo.patternConfidence * 100,
+				debugInfo.predictionError,
+				debugInfo.kalmanConfidence * 100
+			)
+		)
 	end
 
 	--Lol
